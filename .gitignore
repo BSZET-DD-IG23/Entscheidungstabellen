@@ -4,4 +4,5 @@ build/
 .vs
 .idea
 .vscode
-cmake-*
+cmake-**
+.kdev4

@@ -1,195 +1,222 @@
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_main.h>
-#include <SDL3/SDL_init.h>
-#include <SDL3_ttf/SDL_ttf.h>
-#include <SDL3_mixer/SDL_mixer.h>
-#include <SDL3_image/SDL_image.h>
-#include <cmath>
-#include <string_view>
-#include <filesystem>
+#include <raylib.h>
+#include <raymath.h>
 
-constexpr uint32_t windowStartWidth = 400;
-constexpr uint32_t windowStartHeight = 400;
+#include <nlohmann/json.hpp>
 
-struct AppContext {
-    SDL_Window* window;
-    SDL_Renderer* renderer;
-    SDL_Texture* messageTex, *imageTex;
-    SDL_FRect messageDest;
-    SDL_AudioDeviceID audioDevice;
-    Mix_Music* music;
-    SDL_AppResult app_quit = SDL_APP_CONTINUE;
+using json = nlohmann::json;
+
+#include <vector>
+#include <string>
+#include <sol/sol.hpp>
+
+#define COLOR_ORANGE (Color) {225, 138, 50, 255}
+#define COLOR_BLUE (Color) {111, 173, 162, 255}
+
+struct Error {
+    enum ErrorCode {
+        SUCCESS = 0,
+        FAILURE = -1,
+        RUNTIME_ERROR = -2,
+        COMPILE_ERROR = -3,
+        SYNTAX_ERROR = -4,
+        SEMANTIC_ERROR = -5,
+        INTERNAL_ERROR = -6,
+    };
+
+    std::string message;
+    size_t code = SUCCESS;
 };
 
-SDL_AppResult SDL_Fail(){
-    SDL_LogError(SDL_LOG_CATEGORY_CUSTOM, "Error %s", SDL_GetError());
-    return SDL_APP_FAILURE;
-}
+template<typename T>
+concept CArithmetic = std::is_arithmetic_v<T>;
 
-SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
-    // init the library, here we make a window so we only need the Video capabilities.
-    if (not SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)){
-        return SDL_Fail();
+template<CArithmetic T>
+struct TVector2 {
+	T x;
+	T y;
+
+	// Constructors
+	TVector2() = default;
+	explicit TVector2(T x, T y) : x(x), y(y) {}
+	TVector2(const TVector2& other) : x(other.x), y(other.y) {}
+	TVector2(TVector2&& other)  noexcept : x(other.x), y(other.y) {}
+	explicit TVector2(Vector2 rl) : x(rl.x), y(rl.y) {}
+
+	// Math
+	TVector2<T> operator+(const TVector2<T>& other) const {
+		return TVector2<T>(x + other.x, y + other.y);
+	}
+	TVector2<T> operator-(const TVector2<T>& other) const {
+		return TVector2<T>(x - other.x, y - other.y);
+	}
+	TVector2<T> operator*(const TVector2<T>& other) const {
+		return TVector2<T>(x * other.x, y * other.y);
+	}
+	TVector2<T> operator/(const TVector2<T>& other) const {
+		return TVector2<T>(x / other.x, y / other.y);
+	}
+
+	// operators
+	TVector2<T>& operator+=(const TVector2<T>& other) {
+		x += other.x;
+		y += other.y;
+		return *this;
+	}
+	TVector2<T>& operator-=(const TVector2<T>& other) {
+		x -= other.x;
+		y -= other.y;
+		return *this;
+	}
+	TVector2<T>& operator*=(const TVector2<T>& other) {
+		x *= other.x;
+		y *= other.y;
+		return *this;
+	}
+	TVector2<T>& operator/=(const TVector2<T>& other) {
+		x /= other.x;
+		y /= other.y;
+		return *this;
+	}
+
+	// Comparison
+	bool operator==(const TVector2<T>& other) const {
+		return x == other.x && y == other.y;
+	}
+	bool operator!=(const TVector2<T>& other) const {
+		return x != other.x || y != other.y;
+	}
+
+	TVector2& operator()(T x,  T y) const {
+		this->x = x;
+		this->y = y;
+		return *this;
+	}
+
+	// to Raylib
+	explicit operator Vector2() const {
+		return (Vector2){x, y};
+	}
+};
+
+typedef TVector2<float> vec2, vec2f;
+
+typedef TVector2<int> ivec2;
+typedef TVector2<size_t> uvec2;
+typedef TVector2<signed long long> svec2;
+typedef TVector2<double> dvec2;
+
+typedef TVector2<bool> bvec2;
+
+
+class Table {
+	Color bg_color = COLOR_BLUE;
+	Color border_color = DARKGRAY;
+	Color text_color = BLACK;
+	Color selected_color = COLOR_ORANGE;
+
+	Rectangle bounds;
+
+	size_t rows = 5;
+	size_t cols = 10;
+	svec2 selected = svec2{0,0};
+public:
+
+    Table() = default;
+	Table(Rectangle bounds, size_t rows, size_t cols) : bounds(bounds), rows(rows), cols(cols) {}
+
+	void move_y(bool pos) {
+		if (pos) {
+			selected.y++;
+		}
+		else {
+			selected.y--;
+		}
+
+		if (selected.y < 0) {
+			selected.y = rows - 1;
+		}
+		else if (selected.y >= rows) {
+			selected.y = 0;
+		}
+	}
+
+	void move_x(bool pos) {
+		if (pos) {
+			selected.x++;
+		}
+		else {
+			selected.x--;
+		}
+
+		if (selected.x < 0) {
+			selected.x = 0;
+			move_y(false);
+		}
+		else if (selected.x >= cols) {
+			selected.x = 0;
+			move_y(true);
+		}
+	}
+
+	virtual void update() {
+		if (IsKeyPressed(KEY_UP)) {
+			move_y(false);
+		}
+		if (IsKeyPressed(KEY_DOWN)) {
+			move_y(true);
+		}
+		if (IsKeyPressed(KEY_LEFT)) {
+			move_x(false);
+		}
+		if (IsKeyPressed(KEY_RIGHT)) {
+			move_x(true);
+		}
+	}
+
+
+	virtual void draw() {
+	    const float border_size = bounds.width / (1.2f* static_cast<float>(cols));
+    	const float cell_width = bounds.width / static_cast<float>(cols);
+    	const float cell_height = bounds.height / static_cast<float>(rows);
+
+    	DrawRectangleRec(bounds, bg_color);
+
+    	for (size_t i = 0; i < rows; i++) {
+    		const float y = bounds.y + cell_height * static_cast<float>(i);
+    		DrawLineEx(Vector2{bounds.x, y}, Vector2{bounds.x +  bounds.width, y}, border_size, border_color);
+    	}
+
+    	for (size_t i = 0; i < cols; i++) {
+    		const float x = bounds.x + cell_width * (float)i;
+    		DrawLineEx(Vector2{x, bounds.y}, Vector2{x, bounds.y + bounds.height}, border_size, border_color);
+    	}
+
+    	DrawRectangleLinesEx({bounds.x, bounds.y, bounds.width, bounds.height}, border_size, border_color);
+
+    	if (selected.x > 0 && selected.y > 0) {
+    		const float y = bounds.y + cell_height * static_cast<float>(selected.x);
+    		const float x = bounds.x + cell_width * static_cast<float>(selected.y);
+			DrawRectangleRounded({x,y, cell_width, cell_height}, border_size, 5, selected_color);
+    	}
     }
-    
-    // init TTF
-    if (not TTF_Init()) {
-        return SDL_Fail();
-    }
-    
-    // create a window
-   
-    SDL_Window* window = SDL_CreateWindow("SDL Minimal Sample", windowStartWidth, windowStartHeight, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
-    if (not window){
-        return SDL_Fail();
-    }
-    
-    // create a renderer
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, NULL);
-    if (not renderer){
-        return SDL_Fail();
-    }
-    
-    // load the font
-#if __ANDROID__
-    std::filesystem::path basePath = "";   // on Android we do not want to use basepath. Instead, assets are available at the root directory.
-#else
-    auto basePathPtr = SDL_GetBasePath();
-     if (not basePathPtr){
-        return SDL_Fail();
-    }
-     const std::filesystem::path basePath = basePathPtr;
-#endif
+};
 
-    const auto fontPath = basePath / "Inter-VariableFont.ttf";
-    TTF_Font* font = TTF_OpenFont(fontPath.string().c_str(), 36);
-    if (not font) {
-        return SDL_Fail();
-    }
 
-    // render the font to a surface
-    const std::string_view text = "Hello SDL!";
-    SDL_Surface* surfaceMessage = TTF_RenderText_Solid(font, text.data(), text.length(), { 255,255,255 });
+int main() {
+    InitWindow(900, 600, "Entscheidungstabellen");
 
-    // make a texture from the surface
-    SDL_Texture* messageTex = SDL_CreateTextureFromSurface(renderer, surfaceMessage);
+    Table table({0,0,900,600}, 5, 10);
 
-    // we no longer need the font or the surface, so we can destroy those now.
-    TTF_CloseFont(font);
-    SDL_DestroySurface(surfaceMessage);
-
-    // load the SVG
-    auto svg_surface = IMG_Load((basePath / "gs_tiger.svg").string().c_str());
-    SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, svg_surface);
-    SDL_DestroySurface(svg_surface);
-    
-
-    // get the on-screen dimensions of the text. this is necessary for rendering it
-    auto messageTexProps = SDL_GetTextureProperties(messageTex);
-    SDL_FRect text_rect{
-            .x = 0,
-            .y = 0,
-            .w = float(SDL_GetNumberProperty(messageTexProps, SDL_PROP_TEXTURE_WIDTH_NUMBER, 0)),
-            .h = float(SDL_GetNumberProperty(messageTexProps, SDL_PROP_TEXTURE_HEIGHT_NUMBER, 0))
-    };
-
-    // init SDL Mixer
-    auto audioDevice = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, NULL);
-    if (not audioDevice) {
-        return SDL_Fail();
-    }
-    if (not Mix_OpenAudio(audioDevice, NULL)) {
-        return SDL_Fail();
-    }
-
-    // load the music
-    auto musicPath = basePath / "the_entertainer.ogg";
-    auto music = Mix_LoadMUS(musicPath.string().c_str());
-    if (not music) {
-        return SDL_Fail();
-    }
-
-    // play the music (does not loop)
-    Mix_PlayMusic(music, 0);
-    
-    // print some information about the window
-    SDL_ShowWindow(window);
+    // Main game loop
+    while (!WindowShouldClose())    // Detect window close button or ESC key
     {
-        int width, height, bbwidth, bbheight;
-        SDL_GetWindowSize(window, &width, &height);
-        SDL_GetWindowSizeInPixels(window, &bbwidth, &bbheight);
-        SDL_Log("Window size: %ix%i", width, height);
-        SDL_Log("Backbuffer size: %ix%i", bbwidth, bbheight);
-        if (width != bbwidth){
-            SDL_Log("This is a highdpi environment.");
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
+        {
+        	table.update();
+            table.draw();
         }
+        EndDrawing();
     }
-
-    // set up the application data
-    *appstate = new AppContext{
-       .window = window,
-       .renderer = renderer,
-       .messageTex = messageTex,
-       .imageTex = tex,
-       .messageDest = text_rect,
-       .audioDevice = audioDevice,
-       .music = music,
-    };
-    
-    SDL_SetRenderVSync(renderer, -1);   // enable vysnc
-    
-    SDL_Log("Application started successfully!");
-
-    return SDL_APP_CONTINUE;
-}
-
-SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event* event) {
-    auto* app = (AppContext*)appstate;
-    
-    if (event->type == SDL_EVENT_QUIT) {
-        app->app_quit = SDL_APP_SUCCESS;
-    }
-
-    return SDL_APP_CONTINUE;
-}
-
-SDL_AppResult SDL_AppIterate(void *appstate) {
-    auto* app = (AppContext*)appstate;
-
-    // draw a color
-    auto time = SDL_GetTicks() / 1000.f;
-    auto red = (std::sin(time) + 1) / 2.0 * 255;
-    auto green = (std::sin(time / 2) + 1) / 2.0 * 255;
-    auto blue = (std::sin(time) * 2 + 1) / 2.0 * 255;
-    
-    SDL_SetRenderDrawColor(app->renderer, red, green, blue, SDL_ALPHA_OPAQUE);
-    SDL_RenderClear(app->renderer);
-
-    // Renderer uses the painter's algorithm to make the text appear above the image, we must render the image first.
-    SDL_RenderTexture(app->renderer, app->imageTex, NULL, NULL);
-    SDL_RenderTexture(app->renderer, app->messageTex, NULL, &app->messageDest);
-
-    SDL_RenderPresent(app->renderer);
-
-    return app->app_quit;
-}
-
-void SDL_AppQuit(void* appstate, SDL_AppResult result) {
-    auto* app = (AppContext*)appstate;
-    if (app) {
-        SDL_DestroyRenderer(app->renderer);
-        SDL_DestroyWindow(app->window);
-
-        Mix_FadeOutMusic(1000);  // prevent the music from abruptly ending.
-        Mix_FreeMusic(app->music); // this call blocks until the music has finished fading
-        Mix_CloseAudio();
-        SDL_CloseAudioDevice(app->audioDevice);
-
-        delete app;
-    }
-    TTF_Quit();
-    Mix_Quit();
-
-    SDL_Log("Application quit successfully!");
-    SDL_Quit();
+    return 0;
 }
